@@ -5,7 +5,7 @@ This is an AutoHotkey script that allow you to create/restore backups for the ga
 Download page: https://github.com/IDizor/7D2D-Backupper/releases
 
 How to use:
-  1. Install the AutoHotkey application if you don't have it.
+  1. Install the AutoHotkey application if you don't have it: https://www.autohotkey.com/
   2. Run the "7D2D-Backupper.ahk" script. The 7D2D icon will appear in the windows tray.
 
 Controls: (work in game Main Menu only)
