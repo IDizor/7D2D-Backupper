@@ -122,7 +122,7 @@ if (!busy)
       if (backupFile != "")
       {
         if (RestoringConfirmation) {
-          MsgBox , 0x1004, Restoring Confirmation, % "Are you sure you want to restore the latest backup?`n`nBackup: " backupFile "`nMap: " mapName "`nGame: " saveName "`n`nCurrent progrees in this game will be lost."
+          MsgBox , 0x1004, Restoring Confirmation, % "Are you sure you want to restore the latest backup?`n`nBackup: " backupFile "`nMap: " mapName "`nGame: " saveName "`n`nCurrent progress in this game will be lost."
           IfMsgBox No
           {
             busy := 0
@@ -310,6 +310,7 @@ PlaySound(soundFile) {
 
 OpenAppDataDir() {
   Run, explore %APPDATA%\7DaysToDie
+  return
 }
 
 SuspendGameProcess() {
