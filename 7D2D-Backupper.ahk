@@ -1,13 +1,14 @@
 ;
-; This AutoHotkey script allows you to create/restore backups for the game '7 Days to Die' easily.
+; This is an AutoHotkey script that allow you to create/restore backups for the game '7 Days to Die' easily.
+; Version 2.0
 ;
 ; How to use:
 ;   1. Install the AutoHotkey application if you don't have it.
 ;   2. Run this AHK script. The 7D2D icon will appear in the windows tray.
 ;
-; Controls: (work in game Main Menu only)
-;   F5 - Create a new backup for the latest played game.
-;   F9 - Restore the latest backup for the latest played game.
+; Controls: (work in the game Main Menu only)
+;   F5 - Create a new backup for the selected game.
+;   F9 - Restore the selected backup.
 ;
 ; Backups are stored in "%APPDATA%\7DaysToDie\Backups\<MapName>\<GameName>" folder.
 ; Check the config section below for some options.
@@ -17,9 +18,8 @@ Menu, Tray, Icon, icon.png
 ; Config
 SuspendGame = 1
 EnableSounds = 1
-BackupsLimit = 3 ; Backups limit per saved game.
+BackupsLimit = 5 ; Backups limit per single game (save).
 CompressionLevel = NoCompression ; The compression level for backups. Values: NoCompression, Fastest, Optimal.
-RestoringConfirmation = 1
 
 ; Constants
 SavesDir = %APPDATA%\7DaysToDie\Saves
@@ -43,50 +43,55 @@ if (!busy)
   global busy
   busy := 1
   skipFinalErrorSound := 0
-  saveDir := GetLatestPlayedGameDir()
   
-  if (saveDir != "")
+  if (!IsPlayingNow())
   {
-    if (!IsSaveLocked(saveDir))
+    selectedGame := GuiSelectGameToBackup()
+    if (selectedGame != "")
     {
-      pathParts := StrSplit(saveDir, "\")
-      saveName := pathParts[pathParts.MaxIndex()]
-      mapName := pathParts[pathParts.MaxIndex() - 1]
-      
-      FormatTime, currentDateTime,, yyyy.MM.dd_HH.mm.ss
-      backupToDir := BackupsDir "\" mapName "\" saveName
-      backupFile := backupToDir "\" currentDateTime ".zip"
-      
-      FileCreateDir, %backupToDir%
-      
-      IfExist, %backupToDir%
+      saveDir := SavesDir . "\" . selectedGame
+
+      if (!IsSaveLocked(saveDir))
       {
-        try {
-          SuspendGameProcess()          
-          SplashTextOn , 300, 120, Creating a backup, `nCreating new backup, please wait...`n`nMap: %mapName%`nGame: %saveName%
-          PlaySound(SoundStart)
-          RunWait PowerShell.exe -Command Compress-Archive -LiteralPath '%saveDir%' -CompressionLevel %CompressionLevel% -DestinationPath '%backupFile%' -Force,, Hide
-          
-          IfExist, %backupFile%
-          {
-            SplashTextOff
-            PlaySound(SoundDone)
-            Sleep, 2000
+        pathParts := StrSplit(selectedGame, "\")
+        mapName := pathParts[1]
+        saveName := pathParts[2]
+        
+        FormatTime, currentDateTime,, yyyy.MM.dd_HH.mm.ss
+        backupToDir := BackupsDir "\" mapName "\" saveName
+        backupFile := backupToDir "\" currentDateTime ".zip"
+        
+        FileCreateDir, %backupToDir%
+        
+        IfExist, %backupToDir%
+        {
+          try {
+            SuspendGameProcess()          
+            SplashTextOn , 300, 120, Creating a backup, `nCreating new backup, please wait...`n`nGame: %saveName%`nOn the map: %mapName%
+            PlaySound(SoundStart)
+            RunWait PowerShell.exe -Command Compress-Archive -LiteralPath '%saveDir%' -CompressionLevel %CompressionLevel% -DestinationPath '%backupFile%' -Force,, Hide
+            
+            IfExist, %backupFile%
+            {
+              SplashTextOff
+              PlaySound(SoundDone)
+              Sleep, 20
+              busy := 0
+              DeleteOldBackups(backupToDir)
+              ;MsgBox, %backupFile%
+              return
+            }
+          } catch e {
+            skipFinalErrorSound := 1
+            PlaySound(SoundError)
+            MsgBox , 0x1004, Error, % "An error occured at: " e.what "`nFile: " e.file "`nLine: " e.line "`n`nDo you want to review backups and saves in explorer?"
+            IfMsgBox Yes
+              OpenAppDataDir()
+          } finally {
+            SplashTextOff          
+            ResumeGameProcess()
             busy := 0
-            DeleteOldBackups(backupToDir)
-            ;MsgBox, %backupFile%
-            return
           }
-        } catch e {
-          skipFinalErrorSound := 1
-          PlaySound(SoundError)
-          MsgBox , 0x1004, Error, % "An error occured at: " e.what "`nFile: " e.file "`nLine: " e.line "`n`nDo you want to review backups and saves in explorer?"
-          IfMsgBox Yes
-            OpenAppDataDir()
-        } finally {
-          SplashTextOff          
-          ResumeGameProcess()
-          busy := 0
         }
       }
     }
@@ -98,6 +103,7 @@ if (!busy)
   }
 }
 return
+#IfWinActive
 
 #IfWinActive, ahk_exe 7DaysToDie.exe
 ~F9:: ; Restore backup
@@ -106,33 +112,25 @@ if (!busy)
   global busy
   busy := 1
   skipFinalErrorSound := 0
-  saveDir := GetLatestPlayedGameDir()
-  
-  if (saveDir != "")
+
+  if (!IsPlayingNow())
   {
-    if (!IsSaveLocked(saveDir))
+    selectedBackup := GuiSelectBackup()
+    if (selectedBackup != "")
     {
-      pathParts := StrSplit(saveDir, "\")
-      saveName := pathParts[pathParts.MaxIndex()]
-      mapName := pathParts[pathParts.MaxIndex() - 1]
+      saveDir := SavesDir . "\" . SubStr(selectedBackup, 1, InStr(selectedBackup, "\", false, 0) - 1)
       
-      backupsLocation := BackupsDir "\" mapName "\" saveName
-      backupFile := GetLatestBackup(backupsLocation)
-      
-      if (backupFile != "")
+      if (!IsSaveLocked(saveDir))
       {
-        if (RestoringConfirmation) {
-          MsgBox , 0x1004, Restoring Confirmation, % "Are you sure you want to restore the latest backup?`n`nBackup: " backupFile "`nMap: " mapName "`nGame: " saveName "`n`nCurrent progress in this game will be lost."
-          IfMsgBox No
-          {
-            busy := 0
-            return
-          }
-        }
+        pathParts := StrSplit(selectedBackup, "\")
+        mapName := pathParts[1]
+        saveName := pathParts[2]
+
+        backupFile := BackupsDir . "\" . selectedBackup
         
         try {
           SuspendGameProcess()
-          SplashTextOn , 300, 120, Restoring a backup, `nRestoring the latest backup, please wait...`n`nMap: %mapName%`nGame: %saveName%
+          SplashTextOn , 300, 120, Restoring a backup, `nRestoring the selected backup, please wait...`n`nMap: %mapName%`nGame: %saveName%
           PlaySound(SoundStart)
           
           IfExist, %saveDir%_bak
@@ -145,15 +143,14 @@ if (!busy)
           
           IfNotExist, %saveDir%
           {
-            RunWait PowerShell.exe -Command Expand-Archive -LiteralPath '%backupsLocation%\%backupFile%' -DestinationPath '%SavesDir%\%mapName%',, Hide
+            RunWait PowerShell.exe -Command Expand-Archive -LiteralPath '%backupFile%' -DestinationPath '%SavesDir%\%mapName%',, Hide
             
             IfExist, %saveDir%\Region
             {
               SplashTextOff
               FileRemoveDir, %saveDir%_bak , 1
-              FileSetTime, , %saveDir%\main.ttw
               PlaySound(SoundDone)
-              Sleep, 2000
+              Sleep, 20
               busy := 0
               return
             }
@@ -177,13 +174,9 @@ if (!busy)
           ResumeGameProcess()
           busy := 0
         }
-      } else {
-        skipFinalErrorSound := 1
-        PlaySound(SoundError)
-        MsgBox , 0x1004, No backup, % "There is no backup found for the latest played game: `n`nMap: " mapName "`nGame: " saveName "`n`nDo you want to review backups and saves in explorer?"
-        IfMsgBox Yes
-          OpenAppDataDir()
       }
+    } else {
+      skipFinalErrorSound := 1
     }
   }
   
@@ -193,33 +186,194 @@ if (!busy)
   }
 }
 return
+#IfWinActive
 
 ;; ----------- 	THE FUNCTIONS   -------------------------------------
-GetLatestPlayedGameDir()
+GuiSelectGameToBackup()
+{
+  global SGGuiSelectedGame
+  global SGGuiSelectedBackup
+  global SGGuiOk
+  result := ""
+  games := GetAllPlayedGames()
+
+  if (ObjLength(games))
+  {
+    Gui, SGGui: -MaximizeBox -MinimizeBox +AlwaysOnTop +DPIScale
+    Gui, SGGui: Font, s11
+    Gui, SGGui: Margin, 12, 12
+    Gui, SGGui: Add, Text,, Select a game to backup:
+    Gui, SGGui: Add, DropDownList, vSGGuiSelectedGame w300 R8, % ArrayToDropDownChoices(games)
+    Gui, SGGui: Add, Button, vSGGuiOk gSGOk h28 w80 xm+50 default, Backup
+    Gui, SGGui: Add, Button, gCancel h28 w80 xp+120 yp, Cancel
+    Gui, SGGui: Show,, Create 7DtD game backup
+
+    WinWaitClose, Create 7DtD game backup
+    Gui, SGGui: Destroy
+    return result
+
+    SGOk:
+    {
+      Gui, SGGui:Submit, NoHide
+      result := SGGuiSelectedGame
+      Gui, SGGui: Destroy
+      return
+    }
+  }
+
+  return result
+}
+
+GuiSelectBackup()
+{
+  global RCGuiSelectedGame
+  global RCGuiSelectedBackup
+  global RCGuiOk
+  result := ""
+  saves := GetSavesWhichHaveBackups()
+
+  if (ObjLength(saves))
+  {
+    backups := GetBackups(saves[1])
+
+    Gui, RCGui: -MaximizeBox -MinimizeBox +AlwaysOnTop +DPIScale
+    Gui, RCGui: Font, s11
+    Gui, RCGui: Margin, 12, 12
+    Gui, RCGui: Add, Text,, Select map\game:
+    Gui, RCGui: Add, DropDownList, vRCGuiSelectedGame gRCGameSelected w300 R8, % ArrayToDropDownChoices(saves)
+    Gui, RCGui: Add, Text,, ATTENTION:`nCurrent progress in this game will be lost.
+    Gui, RCGui: Add, Text,, Select a backup file to restore:
+    Gui, RCGui: Add, DropDownList, vRCGuiSelectedBackup w300 R8, % ArrayToDropDownChoices(backups)
+    Gui, RCGui: Add, Button, vRCGuiOk gRCOk h28 w80 xm+50 default, Restore
+    Gui, RCGui: Add, Button, gCancel h28 w80 xp+120 yp, Cancel
+    Gui, RCGui: Show,, Restore 7DtD Backup
+
+    WinWaitClose, Restore 7DtD Backup
+    Gui, RCGui: Destroy
+    return result
+
+    RCGameSelected:
+    {
+      Gui, RCGui:Submit, NoHide
+      backups := ArrayToDropDownChoices(GetBackups(RCGuiSelectedGame))
+      GuiControl, RCGui:, RCGuiSelectedBackup, |%backups%
+      return
+    }
+
+    RCOk:
+    {
+      Gui, RCGui:Submit, NoHide
+      result := RCGuiSelectedGame . "\" . RCGuiSelectedBackup
+      Gui, RCGui: Destroy
+      return
+    }
+  }
+
+  return result
+}
+
+GetBackups(fromDir)
+{
+  global BackupsDir
+  backups := []
+  IfExist, %BackupsDir%\%fromDir%
+  {
+    fileList := ""
+    Loop, Files, %BackupsDir%\%fromDir%\*.zip
+      fileList .= A_LoopFileName "`n"
+
+    if (fileList != "")
+    {
+      Sort, fileList, R
+      Loop, Parse, fileList, "`n"
+      {
+        backups.Push(A_LoopField)
+      }
+    }
+  }
+
+  return backups
+}
+
+GetSavesWhichHaveBackups()
 {
   global SavesDir
-  
+  global BackupsDir
+  result := []
+
   IfExist, %SavesDir%
   {
-    filesList := ""
+    savesList := ""
     Loop, Files, %SavesDir%\main.ttw , R
     {
       StringRight, dirSuffix, A_LoopFileDir, 4
       if (dirSuffix != "_bak") {
-        filesList .= A_LoopFileTimeModified "," A_LoopFileDir "`r`n"
+        savesList .= A_LoopFileTimeModified "," A_LoopFileDir "`n"
       }
     }
+    StringTrimRight, savesList, savesList, 1
     
-    if (filesList != "")
+    if (savesList != "")
     {
-      Sort, filesList, R
-      saveDir := SubStr(filesList, 16, InStr(filesList, "`r") - 16)
-      
-      return saveDir
+      savesNames := ""
+      Sort, savesList, R
+      Loop, Parse, savesList, "`n"
+      {
+        StringLen, saveLength, A_LoopField
+        StringGetPos, fromIndex, A_LoopField, \, R2
+        StringRight, saveName, A_LoopField, saveLength - fromIndex - 1
+        savesNames .= saveName "`n"
+      }
+      StringTrimRight, savesNames, savesNames, 1
+
+      if (savesNames != "")
+      {
+        Loop, Parse, savesNames, "`n"
+        {
+          if (FileExist(BackupsDir "\" A_LoopField "\*.zip"))
+          {
+            result.Push(A_LoopField)
+          }
+        }
+      }
+    }
+  }
+
+  return result
+}
+
+GetAllPlayedGames()
+{
+  global SavesDir
+  result := []
+
+  IfExist, %SavesDir%
+  {
+    savesList := ""
+    Loop, Files, %SavesDir%\main.ttw , R
+    {
+      StringRight, dirSuffix, A_LoopFileDir, 4
+      if (dirSuffix != "_bak") {
+        savesList .= A_LoopFileTimeModified "," A_LoopFileDir "`n"
+      }
+    }
+    StringTrimRight, savesList, savesList, 1
+    
+    if (savesList != "")
+    {
+      savesNames := ""
+      Sort, savesList, R
+      Loop, Parse, savesList, "`n"
+      {
+        StringLen, saveLength, A_LoopField
+        StringGetPos, fromIndex, A_LoopField, \, R2
+        StringRight, saveName, A_LoopField, saveLength - fromIndex - 1
+        result.Push(saveName)
+      }
     }
   }
   
-  return ""
+  return result
 }
 
 IsSaveLocked(saveDir)
@@ -248,25 +402,19 @@ IsFileLocked(filePath)
   return Errorlevel != 0
 }
 
-GetLatestBackup(fromDir)
+IsPlayingNow()
 {
-  IfExist, %fromDir%
+  global SavesDir
+  games := GetAllPlayedGames()
+  for i, game in games
   {
-    filesList := ""
-    Loop, Files, %fromDir%\*.zip
+    gameDir := SavesDir . "\" . game
+    if (IsSaveLocked(gameDir))
     {
-      filesList .= A_LoopFileName "`r`n"
-    }
-    
-    if (filesList != "")
-    {
-      Sort, filesList, R
-      firstFile := SubStr(filesList, 1, InStr(filesList, "`r") - 1)
-      return firstFile
+      return true
     }
   }
-  
-  return ""
+  return false
 }
 
 DeleteOldBackups(fromDir)
@@ -344,5 +492,22 @@ ResumeGameProcess() {
 ProcExist(PID_or_Name="") {
   Process, Exist, % (PID_or_Name="") ? DllCall("GetCurrentProcessID") : PID_or_Name
   Return Errorlevel
+}
+
+ArrayToDropDownChoices(arr)
+{
+  choices := ""
+  for i, v in arr
+  {
+    if (v != "")
+    {
+      choices .= v "|"
+      if (i == 1)
+      {
+        choices .= "|"
+      }
+    }
+  }
+  return choices
 }
 ;; ----------- 	END FUNCTIONS   -------------------------------------
