@@ -1,6 +1,6 @@
 ;
 ; This is an AutoHotkey script that allow you to create/restore backups for the game '7 Days to Die' easily.
-; Version 2.0
+; Version 2.1
 ;
 ; How to use:
 ;   1. Install the AutoHotkey application if you don't have it.
@@ -13,12 +13,13 @@
 ; Backups are stored in "%APPDATA%\7DaysToDie\Backups\<MapName>\<GameName>" folder.
 ; Check the config section below for some options.
 
+#SingleInstance, ignore
 Menu, Tray, Icon, icon.png
 
 ; Config
-SuspendGame = 1
+SuspendGame = 0
 EnableSounds = 1
-BackupsLimit = 5 ; Backups limit per single game (save).
+BackupsLimit = 10 ; Backups limit per single game (save).
 CompressionLevel = NoCompression ; The compression level for backups. Values: NoCompression, Fastest, Optimal.
 
 ; Constants
@@ -69,7 +70,7 @@ if (!busy)
             SuspendGameProcess()          
             SplashTextOn , 300, 120, Creating a backup, `nCreating new backup, please wait...`n`nGame: %saveName%`nOn the map: %mapName%
             PlaySound(SoundStart)
-            RunWait PowerShell.exe -Command Compress-Archive -LiteralPath '%saveDir%' -CompressionLevel %CompressionLevel% -DestinationPath '%backupFile%' -Force,, Hide
+            RunWait pwsh.exe -Command Compress-Archive -LiteralPath '%saveDir%' -CompressionLevel %CompressionLevel% -DestinationPath '%backupFile%' -Force,, Hide
             
             IfExist, %backupFile%
             {
@@ -143,7 +144,7 @@ if (!busy)
           
           IfNotExist, %saveDir%
           {
-            RunWait PowerShell.exe -Command Expand-Archive -LiteralPath '%backupFile%' -DestinationPath '%SavesDir%\%mapName%',, Hide
+            RunWait pwsh.exe -Command Expand-Archive -LiteralPath '%backupFile%' -DestinationPath '%SavesDir%\%mapName%',, Hide
             
             IfExist, %saveDir%\Region
             {
@@ -226,9 +227,9 @@ GuiSelectGameToBackup()
 
 GuiSelectBackup()
 {
+  global BackupsDir
   global RCGuiSelectedGame
   global RCGuiSelectedBackup
-  global RCGuiOk
   result := ""
   saves := GetSavesWhichHaveBackups()
 
@@ -244,8 +245,10 @@ GuiSelectBackup()
     Gui, RCGui: Add, Text,, ATTENTION:`nCurrent progress in this game will be lost.
     Gui, RCGui: Add, Text,, Select a backup file to restore:
     Gui, RCGui: Add, DropDownList, vRCGuiSelectedBackup w300 R8, % ArrayToDropDownChoices(backups)
-    Gui, RCGui: Add, Button, vRCGuiOk gRCOk h28 w80 xm+50 default, Restore
-    Gui, RCGui: Add, Button, gCancel h28 w80 xp+120 yp, Cancel
+    Gui, RCGui: Add, Button, gBackupRename h28 w80 xm+65, Rename
+    Gui, RCGui: Add, Button, gBackupDelete h28 w80 xp+90 yp, Delete
+    Gui, RCGui: Add, Button, gRCOk h28 w80 xm+65 default, Restore
+    Gui, RCGui: Add, Button, gCancel h28 w80 xp+90 yp, Cancel
     Gui, RCGui: Show,, Restore 7DtD Backup
 
     WinWaitClose, Restore 7DtD Backup
@@ -267,6 +270,68 @@ GuiSelectBackup()
       Gui, RCGui: Destroy
       return
     }
+
+    BackupRename:
+    {
+      Gui, RCGui:Submit, NoHide
+      Gui, RCGui: +Disabled
+      backupName := GuiRenameBackup(RCGuiSelectedBackup)
+      Gui, RCGui: -Disabled
+      if (backupName != "")
+      {
+        FileMove, %BackupsDir%\%RCGuiSelectedGame%\%RCGuiSelectedBackup%, %BackupsDir%\%RCGuiSelectedGame%\%backupName%
+        if (ErrorLevel == 0)
+        {
+          backups := ArrayToDropDownChoices(GetBackups(RCGuiSelectedGame))
+          GuiControl, RCGui:, RCGuiSelectedBackup, |%backups%
+          GuiControl, RCGui: Choose, RCGuiSelectedBackup, %backupName%
+        }
+        else
+        {
+          ; 4096 - to show topmost
+          MsgBox, 4096, Error, Invalid file name
+        }
+      }
+      return
+    }
+
+    BackupDelete:
+    {
+      Gui, RCGui:Submit, NoHide
+      FileDelete, %BackupsDir%\%RCGuiSelectedGame%\%RCGuiSelectedBackup%
+      backups := ArrayToDropDownChoices(GetBackups(RCGuiSelectedGame))
+      GuiControl, RCGui:, RCGuiSelectedBackup, |%backups%
+      return
+    }
+  }
+
+  return result
+}
+
+GuiRenameBackup(backupName)
+{
+  global BRBackupName
+  result := ""
+  
+  Gui, BRGui: -MaximizeBox -MinimizeBox +AlwaysOnTop +ToolWindow +DPIScale
+  Gui, BRGui: Font, s11
+  Gui, BRGui: Margin, 12, 12
+  Gui, BRGui: Add, Text,, Backup name:
+  Gui, BRGui: Add, Edit, vBRBackupName w300, %backupName%
+  Gui, BRGui: Add, Button, gBROk h28 w80 xm+65 default, Rename
+  Gui, BRGui: Add, Button, gCancel h28 w80 xp+90 yp, Cancel
+  Gui, BRGui: Show,, Rename 7DtD Backup
+
+  WinWaitClose, Rename 7DtD Backup
+  Gui, BRGui: Destroy
+  return result
+
+  BROk:
+  {
+    Gui, BRGui:Submit, NoHide
+    result := BRBackupName
+    Gui, BRGui: Destroy
+    return
   }
 
   return result
@@ -426,7 +491,10 @@ DeleteOldBackups(fromDir)
     filesList := ""
     Loop, Files, %fromDir%\*.zip
     {
-      filesList .= A_LoopFileName "`r`n"
+      if (RegExMatch(A_LoopFileName, "i)^\d\d\d\d\.\d\d\.\d\d_\d\d\.\d\d\.\d\d\.zip$")) ; i) is case-insensitive option
+      {
+        filesList .= A_LoopFileName "`r`n"
+      }
     }
     
     Sort, filesList, R
